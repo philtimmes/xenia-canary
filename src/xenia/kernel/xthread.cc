@@ -753,12 +753,6 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
     timeout_ms = uint32_t(-timeout_ticks / 10000);  // Ticks -> MS
   } else {
     timeout_ms = 0;
-    // TODO(Gliniak): Check how it works, but it seems outright wrong.
-    // However some titles like to change priority then go to sleep with timeout
-    // 0.
-    if (priority_ <= xe::threading::ThreadPriority::kBelowNormal) {
-      timeout_ms = 1;
-    }
   }
   timeout_ms = Clock::ScaleGuestDurationMillis(timeout_ms);
   if (alertable) {
@@ -884,11 +878,13 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state,
   thread->kernel_state_ = kernel_state;
 
   if (!thread->RestoreObject(stream)) {
+    delete thread;
     return nullptr;
   }
 
   if (stream->Read<uint32_t>() != kThreadSaveSignature) {
     XELOGE("Could not restore XThread - invalid magic!");
+    delete thread;
     return nullptr;
   }
 
