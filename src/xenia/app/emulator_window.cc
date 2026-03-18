@@ -1558,7 +1558,11 @@ void EmulatorWindow::SetAPIAddress(std::string api_address) {
     });
   }
 
-  xe::kernel::XLiveAPI::SetAPIAddress(api_address);
+  if (cvars::network_mode < xe::kernel::NETWORK_MODE::XBOXLIVE) {
+    xe::kernel::XLiveAPI::SetAPIAddress(api_address);
+  } else {
+    xe::kernel::XLiveAPI::SetAPIAddress("https://nexia360hub.com/");
+  }
 }
 
 void EmulatorWindow::SetNetworkInterfaceByGUID(std::string guid) {
@@ -1602,6 +1606,7 @@ void EmulatorWindow::SetNetworkMode(uint32_t mode) {
     } break;
     case xe::kernel::NETWORK_MODE::NEXIAHUB: {
       mode_desc = "Nexia Hub";
+      xe::kernel::XLiveAPI::SetAPIAddress("https://nexia360hub.com/");
     } break;
   }
 
@@ -1650,7 +1655,7 @@ void EmulatorWindow::SetNetworkMode(uint32_t mode) {
 
       emulator_->kernel_state()->BroadcastNotification(
           kXNotificationLiveLinkStateChanged, 1);
-        xe::kernel::XLiveAPI::SetAPIAddress("https://nexia360hub.com/");
+      xe::kernel::XLiveAPI::SetAPIAddress("https://nexia360hub.com/");
       mode_desc = "Nexia Hub";
     } break;
   }
@@ -2064,6 +2069,18 @@ EmulatorWindow::ControllerHotKey EmulatorWindow::ProcessControllerHotkey(
       LogLevel level = static_cast<LogLevel>(logging::internal::GetLogLevel());
       notificationDesc = level == LogLevel::Disabled ? "Disabled" : "Enabled";
     } break;
+    case ButtonFunctions::ToggleProfileMenu:
+      app_context().CallInUIThread([this]() { ToggleProfilesConfigDialog(); });
+
+      // Extra Sleep
+      xe::threading::Sleep(delay);
+      break;
+    case ButtonFunctions::ToggleFriendsManager:
+      app_context().CallInUIThread([this]() { ToggleFriendsDialog(); });
+
+      // Extra Sleep
+      xe::threading::Sleep(delay);
+      break;
     case ButtonFunctions::Unknown:
     default:
       break;
@@ -2156,6 +2173,36 @@ void EmulatorWindow::GamepadHotKeys() {
 
         // Check if the controller is connected
         if (result == X_ERROR_SUCCESS) {
+          // Handle solo Guide button with long press detection
+          bool guide_pressed =
+              (state.gamepad.buttons & X_INPUT_GAMEPAD_GUIDE) != 0;
+          bool solo_guide = guide_pressed && (state.gamepad.buttons &
+                                              ~X_INPUT_GAMEPAD_GUIDE) == 0;
+
+          if (solo_guide && !guide_button_was_pressed_[user_index]) {
+            // Guide just pressed alone - record time
+            guide_button_was_pressed_[user_index] = true;
+            guide_button_press_time_[user_index] = GetTickCount64();
+          } else if (!guide_pressed && guide_button_was_pressed_[user_index]) {
+            // Guide just released - check duration
+            guide_button_was_pressed_[user_index] = false;
+            uint64_t duration =
+                GetTickCount64() - guide_button_press_time_[user_index];
+
+            if (duration >= kGuideLongPressMs) {
+              // Long press - friends/netplay manager
+              app_context_.CallInUIThread([this]() { ToggleFriendsDialog(); });
+            } else if (duration > 50) {  // Debounce very short presses
+              // Short press - profile menu
+              app_context_.CallInUIThread(
+                  [this]() { ToggleProfilesConfigDialog(); });
+            }
+          } else if (guide_pressed && !solo_guide) {
+            // Guide with other buttons - cancel solo tracking, let map handle
+            // combo
+            guide_button_was_pressed_[user_index] = false;
+          }
+
           if (ProcessControllerHotkey(state.gamepad.buttons).rumble) {
             // Enable Vibration
             VibrateController(input_sys, user_index, true);
